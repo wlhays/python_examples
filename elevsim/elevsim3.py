@@ -54,6 +54,9 @@ class FloorList:
         if self.ndownwaiting[ifloor] == 0:
             self.downreq[ifloor] = False
            
+    def random_floor(a, b):
+        ''' pick random floor between a and b, where which is lower is uncertain'''
+        pass       
     
 async def floor_proc(floorlist, t_count):
     '''  accumulate riders '''
@@ -79,7 +82,9 @@ class Elevator:
         self.curdir = Dir.UP
         self.curfloor = 0
         self.nriders = 0
-        self.reqs = { Dir.UP: (True, False), Dir.DOWN: (True, True) }
+        self.reqs = { Dir.UP: [False, False, False], Dir.DOWN: [False, False, False] }
+        # Dir.UP[nfloors - 1] and Dir.DOWN[0] will always be False
+        # but it's convenient to keep the indexing consistent
         
         #print('new elev: ', self.ident)
         
@@ -103,16 +108,51 @@ class Elevator:
         if self.curdir == Dir.UP:
             return self.reqs[Dir.UP][self.curfloor]
         elif self.curdir == Dir.DOWN:
-            return self.reqs[Dir.DOWN][self.curfloor - 1]
+            return self.reqs[Dir.DOWN][self.curfloor]
         else:
-            return False    #FIXME  
+            return False    #FIXME 
+            
+    def loadriders(self, floorlist, ctr):
+        if floorlist.nupwaiting[self.curfloor] > 0 or floorlist.ndownwaiting[self.curfloor] > 0:
+            print('loadable riders: {}, {}'.format(
+                  floorlist.nupwaiting[self.curfloor], 
+                  floorlist.ndownwaiting[self.curfloor])) 
+        if self.curdir == Dir.UP:
+            if floorlist.nupwaiting[self.curfloor] > 0:
+                inc = min(self.maxriders - self.nriders, floorlist.nupwaiting[self.curfloor])
+                self.nriders += inc 
+                floorlist.dec_upwaiting(self.curfloor, inc)              
+                ctr += random.randint(2, 5)  
+            #get rider requests
+            for rider in range(self.nriders):
+                pick = random.randint(self.curfloor + 1, self.nfloors - 1)
+                self.reqs[Dir.UP][pick] = True                        
+        elif self.curdir == Dir.DOWN:
+            if floorlist.ndownwaiting[self.curfloor] > 0:
+                inc = min(self.maxriders - self.nriders, floorlist.ndownwaiting[self.curfloor])
+                self.nriders += inc
+                floorlist.dec_downwaiting(self.curfloor, inc)                
+                ctr += random.randint(2, 5) 
+            #get rider requests
+            for rider in range(self.nriders):
+                pick = random.randint(0, self.curfloor + 1)
+                self.reqs[Dir.DOWN][pick] = True
+            
+            
+    def makepanelrequest(self):
+        ''' for each rider, pick a floor further along in the current direction '''
+        pass         
                 
     
 async def elev_proc(elev, floorlist, t_count):
+    ''' TODO The floorlist's req's need to be assigned or claimed to an elev'''
     print(elev)
     
     ctr = 0
     await asyncio.sleep(2)
+    
+    #initial load;  otherwise only loads after a stop
+    elev.loadriders(floorlist, ctr)
     
     while ctr < t_count:
         #get elev index from elev_ident, i.e. last char
@@ -142,7 +182,7 @@ async def elev_proc(elev, floorlist, t_count):
         elev.moved()
         if elev.hasrequest():
             print('{} stopping at floor {} at {}'.format(' ' * n * 35, 
-                   floorlist.idents[elev.curfloor], ctr))
+                   floorlist.idents[elev.curfloor], ctr))      
             await asyncio.sleep(random.randint(1, 4) / 10)
             ctr += random.randint(5, 10)
 
@@ -153,27 +193,8 @@ async def elev_proc(elev, floorlist, t_count):
                 else:    
                     elev.nriders -= random.randint(0, elev.nriders)
                 ctr += random.randint(2, 5)
-            #load
-            '''how to await the loading from a floor??? '''
-            if floorlist.nupwaiting[elev.curfloor] > 0 or floorlist.ndownwaiting[elev.curfloor] > 0:
-                print('loadable riders: {}, {}'.format(
-                      floorlist.nupwaiting[elev.curfloor], 
-                      floorlist.ndownwaiting[elev.curfloor])) 
-            if elev.curdir == Dir.UP:
-                if floorlist.nupwaiting[elev.curfloor] > 0:
-                    inc = min(elev.maxriders - elev.nriders, floorlist.nupwaiting[elev.curfloor])
-                    elev.nriders += inc 
-                    floorlist.dec_upwaiting(elev.curfloor, inc)              
-                    ctr += random.randint(2, 5)  
-                #TODO get rider requests
-                                 
-            elif elev.curdir == Dir.DOWN:
-                if floorlist.ndownwaiting[elev.curfloor] > 0:
-                    inc = min(elev.maxriders - elev.nriders, floorlist.ndownwaiting[elev.curfloor])
-                    elev.nriders += inc
-                    floorlist.dec_downwaiting(elev.curfloor, inc)                
-                    ctr += random.randint(2, 5) 
-                #TODO get rider requests                 
+                
+            elev.loadriders(floorlist, ctr)
        
         else:
             ctr += 1
