@@ -173,9 +173,12 @@ class ElevatorList:
     '''singleton'''
     
     #config
-    def __init__(self, count):
+    def __init__(self, elev_count, floor_count):
+        self.elev_count = elev_count
+        self.floor_count = floor_count
+    
         self._elevs = []
-        [self._elevs.append(Elevator('elev' + str(i + 1), None)) for i in range(count)]
+        [self._elevs.append(Elevator('elev' + str(i + 1), None)) for i in range(elev_count)]
         
     #def __iter__(self):
     #    return _elevs.__iter__()
@@ -186,17 +189,54 @@ class ElevatorList:
     def __len__(self):
         return len(_elevs) 
         
-    def req_stop(self, ifloor, direction):
+    def req_stop(self, reqfloor, reqdir):
         '''assign to one elevator'''
-        n = self.get_closest(ifloor, direction)
-        self._elevs[n].reqs[direction][ifloor] = True    
+        e = self._get_closest(reqfloor, reqdir)
+        e.reqs[reqdir][reqfloor] = True    
         
-    def get_closest(self, ifloor, direction):
-        ''' used when assigning an elev to a requesting floor''' 
-        #TODO do the calculation
-        #for e in elevs:
-        return random.randint(0, 1)                         
+    def _get_closest(self, reqfloor, reqdir):
+        ''' used when assigning an elev to a requesting floor
+            return closest elev object
+        '''
+        
+        closest = self._elevs[0]  #arbitrary 
+        min_dist = (self.floor_count - 1) * 2 + 1
+        max_dist = min_dist - 1
+        
+        for e in self._elevs:
+            d = self._get_dist(e, reqfloor, reqdir, max_dist)
+            if d < min_dist:
+                min_dist = d
+                closest = e
+            elif d == min_dist:
+                closest = random.choice([e, closest])
+        print('{}req= f.{}{} c= {}, d= {}'.format(
+               ' ' * 68, reqfloor + 1, reqdir.value, e.ident, min_dist))        
+        return closest                          
                 
+    def _get_dist(self, elev, reqfloor, reqdir, max_dist):
+        '''calculate the distance between the elev and floor'''
+        dist = max_dist
+        
+        if elev.curdir == reqdir:
+            if elev.curdir == Dir.UP:
+                if reqfloor >= elev.curfloor:                    
+                    dist = reqfloor - elev.curfloor
+                else:   # below and behind
+                    dist = max_dist - elev.curfloor + reqfloor 
+            elif elev.curdir == Dir.DOWN:
+                if reqfloor <= elev.curfloor:                    
+                    dist = elev.curfloor - reqfloor
+                else:   #above and behind
+                    dist = max_dist - elev.curfloor + reqfloor 
+        else:
+            if elev.curdir == Dir.UP:
+                dist = max_dist - elev.curfloor - reqfloor
+            elif elev.curdir == Dir.DOWN:
+                dist = elev.curfloor + reqfloor                
+        #print("calc dist: {}".format(dist))     #TODO remove
+        return dist
+                      
     
 async def elev_proc(elev, floorlist, t_count):
     ''' TODO The floorlist's req's need to be assigned or claimed to an elev'''
@@ -221,6 +261,8 @@ async def elev_proc(elev, floorlist, t_count):
                floorlist.nupwaiting[0], floorlist.ndownwaiting[0],
                floorlist.nupwaiting[1], floorlist.ndownwaiting[1],
                floorlist.nupwaiting[2], floorlist.ndownwaiting[2]))
+
+        #TODO wait to move until there is a request ?????        
         await asyncio.sleep(random.randint(1, 3) / 10)
         ctr += random.randint(5, 15)
 
@@ -260,10 +302,10 @@ async def elev_controller(endtime):
     print('started elevator controller')
 
     floorlist = FloorList(3)
-    elevlist = ElevatorList(2)
+    elevlist = ElevatorList(2, 3) #TODO config with details ...
     
     floor_coros = [floor_proc(i, floorlist, elevlist, endtime) for i in range(3)]
-    #change signature to match above: i, elevlist, ...
+    #TODO change signature to match above: i, elevlist, ...
     elev_coros = [elev_proc(elevlist[i], floorlist, endtime) for i in range(2)] 
              
     print('       elev.1                             elev.2                \tf.1\tf.2\tf.3')
@@ -276,12 +318,13 @@ async def elev_controller(endtime):
 
 def main(config):
     ''' TODO:
-             wait to move elev when no req
+             wait to move elev when no req !!!
              Config validation
              Coordinate sim counters and await times
-             floor requests assigned to elevators
              summary stats
              implement up/down as boolean?
+             replace top(n) with gettop()
+             replace hasreq() with hasreq(fl,dir)
              
              '''
      
