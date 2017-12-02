@@ -1,4 +1,12 @@
 # elevator simulation with asyncio coroutines
+'''
+20171201 - elev_procs poll for requests before moving
+
+         - changed timing to just specify an end time and test each
+           coro while loop, as opposed to accumulating bits of time
+
+
+'''
 
 import asyncio
 import random
@@ -61,19 +69,24 @@ class FloorList:
         self.ndownwaiting[ifloor] -= nriders
         if self.ndownwaiting[ifloor] == 0:
             self.downreq[ifloor] = False
-           
+      
+    #not used TODO remove       
     def random_floor(a, b):
         ''' pick random floor between a and b, where which is lower is uncertain'''
-        pass       
+        pass  
+             
     
 async def floor_proc(ifloor, floorlist, elevlist, t_count):
     '''  accumulate riders ; send stop requests to elevatorlist '''
-    ctr = 0
-    await asyncio.sleep(2)
+  
+    #await asyncio.sleep(0.02)
     
-    while ctr < t_count:
+    ncycles = 0
+    
+    while time.perf_counter() < t_count:  
+        ncycles += 1
+        
         #dont add up for top nor down for bottom 
-
         if not floorlist.istop(ifloor):
             inc_upw = random.randint(0,3)
             if inc_upw > 0:
@@ -90,11 +103,11 @@ async def floor_proc(ifloor, floorlist, elevlist, t_count):
                     elevlist.req_stop(ifloor, Dir.DOWN)
                 floorlist.add_downwaiting(ifloor, inc_downw)
                           
-        #floorlist.add_upwaiting(random.randint(0,floorlist.nfloors - 2), random.randint(1,2))        
-        #floorlist.add_downwaiting(random.randint(1,2), random.randint(1,2))
-                
-        await asyncio.sleep(0.4)        
-        ctr += random.randint(5, 10)
+        await asyncio.sleep(random.random())        
+        #ctr += random.randint(5, 10)
+
+    print('floor_proc f.{} done with {} cycles'.format(ifloor + 1, ncycles))  
+    return 'floor_proc f.{} done'.format(ifloor + 1, ncycles) 
 
 class Elevator:
     
@@ -114,8 +127,8 @@ class Elevator:
         #print('new elev: ', self.ident)
         
     def __str__(self):
-        return 'Elev {} at f.{} with {} riders, moving {} at {}'.format( \
-               self.ident, self.curfloor, self.nriders, self.curdir, time.time())  
+        return 'Elev {} at f.{} with {} riders, moving {} at {:10.3f}'.format( \
+               self.ident, self.curfloor, self.nriders, self.curdir, time.perf_counter())  
        
     def moved(self):
         ''' changes state, assumes direction has been adjusted for floor position '''
@@ -128,6 +141,9 @@ class Elevator:
             self.curdir = Dir.DOWN
         elif self.curfloor == 0:
             self.curdir = Dir.UP 
+    
+    def hasanyrequest(self):
+        return any(self.reqs[Dir.UP]) or any(self.reqs[Dir.DOWN])
             
     def hasrequest(self):
         if self.curdir == Dir.UP:
@@ -135,9 +151,10 @@ class Elevator:
         elif self.curdir == Dir.DOWN:
             return self.reqs[Dir.DOWN][self.curfloor]
         else:
-            return False    #FIXME 
+            return False 
             
-    def loadriders(self, floorlist, ctr):
+    def loadriders(self, floorlist):
+        #print("{}loading riders".format(' ' * 70))
         if floorlist.nupwaiting[self.curfloor] > 0 or floorlist.ndownwaiting[self.curfloor] > 0:
             print('{}waiting on f.{}: {}, {}'.format(
                   ' ' * 70, 
@@ -149,7 +166,7 @@ class Elevator:
                 inc = min(self.maxriders - self.nriders, floorlist.nupwaiting[self.curfloor])
                 self.nriders += inc 
                 floorlist.dec_upwaiting(self.curfloor, inc)              
-                ctr += random.randint(2, 5)  
+                #ctr += random.randint(2, 5)  
             #get rider requests
             for rider in range(self.nriders):
                 pick = random.randint(self.curfloor + 1, self.nfloors - 1)
@@ -159,15 +176,16 @@ class Elevator:
                 inc = min(self.maxriders - self.nriders, floorlist.ndownwaiting[self.curfloor])
                 self.nriders += inc
                 floorlist.dec_downwaiting(self.curfloor, inc)                
-                ctr += random.randint(2, 5) 
+                #ctr += random.randint(2, 5) 
             #get rider requests
             for rider in range(self.nriders):
                 pick = random.randint(0, self.curfloor - 1)
                 self.reqs[Dir.DOWN][pick] = True
+        #return ctr
                       
-    def makepanelrequest(self):
-        ''' for each rider, pick a floor further along in the current direction '''
-        pass
+    #def makepanelrequest(self):
+    #    ''' for each rider, pick a floor further along in the current direction '''
+    #    pass
         
 class ElevatorList:   
     '''singleton'''
@@ -192,7 +210,8 @@ class ElevatorList:
     def req_stop(self, reqfloor, reqdir):
         '''assign to one elevator'''
         e = self._get_closest(reqfloor, reqdir)
-        e.reqs[reqdir][reqfloor] = True    
+        e.reqs[reqdir][reqfloor] = True 
+        print('req for {} made for f.{}'.format(e.ident, reqfloor + 1))   
         
     def _get_closest(self, reqfloor, reqdir):
         ''' used when assigning an elev to a requesting floor
@@ -210,8 +229,9 @@ class ElevatorList:
                 closest = e
             elif d == min_dist:
                 closest = random.choice([e, closest])
+
         print('{}req= f.{}{} c= {}, d= {}'.format(
-               ' ' * 68, reqfloor + 1, reqdir.value, e.ident, min_dist))        
+               ' ' * 68, reqfloor + 1, reqdir.value, closest.ident, min_dist))        
         return closest                          
                 
     def _get_dist(self, elev, reqfloor, reqdir, max_dist):
@@ -239,61 +259,89 @@ class ElevatorList:
                       
     
 async def elev_proc(elev, floorlist, t_count):
-    ''' TODO The floorlist's req's need to be assigned or claimed to an elev'''
+    ''' coroutine for each elevator with a loop for each floor
+        to floor move '''
     print(elev)
     
-    ctr = 0
-    await asyncio.sleep(2)
+    n = int(elev.ident[-1:]) - 1
+    
+    #without this, one elev never goes anywhere ??
+    #await asyncio.sleep(1)
     
     #initial load;  otherwise only loads after a stop
-    elev.loadriders(floorlist, ctr)
+    elev.loadriders(floorlist)
     
-    while ctr < t_count:
+    while not elev.hasanyrequest():
+        print("{}p-polling for req".format(' ' * n * 35))
+        await asyncio.sleep(0.05)  # poll for request
+        if time.perf_counter() >= t_count:
+            break;
+        #ctr += 0.2
+        
+    #while ctr < t_count:
+    ntrips = 0
+    
+    while time.perf_counter() < t_count:
         #get elev index from elev_ident, i.e. last char
-        n = int(elev.ident[-1:]) - 1
+        
+        ntrips += 1
+        nunloaded = 0
         
         #move
         #due to async, the waiting rider counts shown here are not always up to date        
-        print('{} moving {} with {} from f.{} at {}{} \t {},{}\t {},{}\t {},{} '.format(
-               ' ' * (int(n > 0)) * 35, 
-               elev.curdir.value, elev.nriders, floorlist.idents[elev.curfloor], ctr, 
-               ' ' * (int(n == 0)) * 35,
+        print('{} moving {} with {} from f.{} at {:5.3f}{} \t {},{}\t {},{}\t {},{} '.format(
+               ' ' * (int(n > 0)) * 30, 
+               elev.curdir.value, elev.nriders, floorlist.idents[elev.curfloor], 
+               time.perf_counter(), 
+               ' ' * (int(n == 0)) * 30,
                floorlist.nupwaiting[0], floorlist.ndownwaiting[0],
                floorlist.nupwaiting[1], floorlist.ndownwaiting[1],
                floorlist.nupwaiting[2], floorlist.ndownwaiting[2]))
+ 
+        # poll for request
+        while not elev.hasanyrequest() and elev.nriders == 0:
+            print("{}polling for req".format(' ' * n * 35))
+            await asyncio.sleep(0.2) 
+            #need to check for endtime so doesn't hang  
+            if time.perf_counter() >= t_count:
+                break;
 
-        #TODO wait to move until there is a request ?????        
-        await asyncio.sleep(random.randint(1, 3) / 10)
-        ctr += random.randint(5, 15)
+        #await asyncio.sleep(random.randint(1, 3) / 10)
+        #ctr += random.randint(5, 15)
 
         #stop at or pass floor
         elev.moved()
         if elev.hasrequest() or floorlist.istop(elev.curfloor) or floorlist.isbottom(elev.curfloor):
-            print('{} stopping at f.{} at {}'.format(' ' * n * 35, 
-                   floorlist.idents[elev.curfloor], ctr))      
+            print('{} stopping at f.{} at {:5.3f}'.format(' ' * n * 35, 
+                   floorlist.idents[elev.curfloor], 
+                   time.perf_counter()))      
             await asyncio.sleep(random.randint(1, 4) / 10)
-            ctr += random.randint(5, 10)
+            #ctr += random.randint(5, 10)
 
             #unload - these unloaded riders disappear from the sim
             if elev.nriders > 0:
                 if floorlist.istop(elev.curfloor) or floorlist.isbottom(elev.curfloor):
+                    nunloaded = elev.nriders
                     elev.nriders = 0
-                else:    
-                    elev.nriders -= random.randint(0, elev.nriders)
-                print('{} unloading {}, now has {} riders'.format( 
+                else: 
+                    nunloaded = random.randint(0, elev.nriders)   
+                    elev.nriders -= nunloaded
+                print('{} unloaded {} riders '.format( 
                        ' ' * (int(n > 0)) * 35,
-                       elev.ident, elev.nriders))   
-                ctr += random.randint(2, 5)
+                       nunloaded))   
+                #ctr += random.randint(2, 5)
             #load    
-            elev.loadriders(floorlist, ctr)
+            elev.loadriders(floorlist)
        
         else:
-            ctr += 1
-            print('{} passing floor {} at {}'.format(' ' * n * 35, 
-                   floorlist.idents[elev.curfloor], ctr))
+            #ctr += 1
+            print('{} passing floor {} at {:5.3f}'.format(' ' * n * 35, 
+                   floorlist.idents[elev.curfloor], 
+                   time.perf_counter()))
             await asyncio.sleep(0.01)
-          
-    return 'elev_proc {} done'.format(elev.ident) 
+            
+    print('{}{} done with {} trips'.format(' ' * n * 35, elev.ident, ntrips))      
+    return 'elev_proc {} done with {} trips'.format(elev.ident, ntrips) 
     
 
 async def elev_controller(endtime):
@@ -318,27 +366,32 @@ async def elev_controller(endtime):
 
 def main(config):
     ''' TODO:
-             wait to move elev when no req !!!
+             alternate way to wait for request, e.g. queue
              Config validation
-             Coordinate sim counters and await times
              summary stats
-             implement up/down as boolean?
+             implement up/down as boolean? e.g. class Dir(Boolean, Enum) ?Hmmm, UP == not DOWN
              replace top(n) with gettop()
              replace hasreq() with hasreq(fl,dir)
+             try block for opening config
+             remove ctr in elev_proc
+             in elevproc, n var needs better name or ?
              
              '''
      
     #TODO this can raise exeption if value not present
     print('total simulation time to run: ', config['running_time'])
              
-    t0 = time.time()
+    t0 = time.perf_counter()   #time()
+    print('start time: {:3.4f}'.format(t0))     
+    
     event_loop = asyncio.get_event_loop()
     try:
-        result = event_loop.run_until_complete(elev_controller(80))
+        result = event_loop.run_until_complete(elev_controller(t0 + config['running_time']))
         print('\nresult: {!r}'.format(result))
+        #[print(i) for i in result]
     finally:
         event_loop.close()
-    print('total time: {:3.4f}'.format(time.time() - t0))    
+    print('total time: {:3.4f}'.format(time.perf_counter() - t0))  #  time() - t0))    
 
 DEFAULT_CONFIG = \
 '''
@@ -346,13 +399,14 @@ DEFAULT_CONFIG = \
 #default elevsim config.yml
 version : 0.1
 
-running_time : 80
+running_time : 3
 floor_count : 3
 elevator_count : 2    
 '''    
 
 if __name__ == "__main__":
     if len(argv) == 2:
+        #TODO try:
         with open(argv[1]) as f_config:
             config = yaml.safe_load(f_config)
             main(config)
