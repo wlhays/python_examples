@@ -16,13 +16,22 @@ from enum import Enum
 from sys import argv
 
 
-Dir = Enum('Direction', 'UP DOWN')
 #ElAc = Enum('Elev Action', 'LOAD MOVE STEP UNLOAD')
 
-class Dir(Enum):
-    UP      = '↑' 
-    DOWN    = '↓'
-    #STOPPED = '▪'
+class BDir(Enum):
+    ''' Binary Direction, i.e. just two opposites 
+        In the case of an unknown direction use the value `None`
+        instead of a BDir.XXX value
+        '''
+    UP      = 'up' 
+    DOWN    = 'down'
+
+    def __str__(self):
+        ''' shorthand for logging output '''
+        if self is BDir.UP:
+            return '↑'
+        else:
+            return '↓'
 
 
 class FloorList:
@@ -72,12 +81,13 @@ class FloorList:
       
     #not used TODO remove       
     def random_floor(a, b):
-        ''' pick random floor between a and b, where which is lower is uncertain'''
+        ''' pick random floor between a and b, 
+            where which one is lower is uncertain'''
         pass  
              
     
 async def floor_proc(ifloor, floorlist, elevlist, t_count):
-    '''  accumulate riders ; send stop requests to elevatorlist '''
+    '''  coroutine to accumulate riders and send stop requests to elevatorlist '''
     
     ncycles = 0
     
@@ -90,7 +100,7 @@ async def floor_proc(ifloor, floorlist, elevlist, t_count):
             if inc_upw > 0:
                 if not floorlist.upreq[ifloor]:
                     floorlist.upreq[ifloor] = True
-                    elevlist.req_stop(ifloor, Dir.UP)
+                    elevlist.req_stop(ifloor, BDir.UP)
                 floorlist.add_upwaiting(ifloor, inc_upw)
                     
         if not floorlist.isbottom(ifloor):
@@ -98,56 +108,55 @@ async def floor_proc(ifloor, floorlist, elevlist, t_count):
             if inc_downw > 0:
                 if not floorlist.downreq[ifloor]:
                     floorlist.downreq[ifloor] = True
-                    elevlist.req_stop(ifloor, Dir.DOWN)
+                    elevlist.req_stop(ifloor, BDir.DOWN)
                 floorlist.add_downwaiting(ifloor, inc_downw)
                           
         await asyncio.sleep(random.random())        
-        #ctr += random.randint(5, 10)
 
     print('floor_proc f.{} done with {} cycles'.format(ifloor + 1, ncycles))  
     return 'floor_proc f.{} done'.format(ifloor + 1, ncycles) 
 
 class Elevator:
     
-    def __init__(self, idx, config):
-        '''config is some structured text (json) with the particulars
-           of the current building context: floors, action durations, etc'''
+    def __init__(self, idx, elev_config):
+        '''config is just the part for the particular elevator which is a dict'''
         self.idx = idx   
-        self.ident = 'elev' + str(idx + 1) 
-        self.maxriders = config['elevator_maxriders']  
-        self.nfloors = config['floor_count']   
-        self.curdir = Dir.UP
+        self.ident = elev_config['name'] 
+        self.maxriders = elev_config['maxriders']    
+        self.nfloors = elev_config['floors_served']   
+        self.curdir = BDir.UP
         self.curfloor = 0
         self.nriders = 0
-        self.reqs = { Dir.UP: [False for i in range(self.nfloors)], 
-                      Dir.DOWN: [False for i in range(self.nfloors)] }
-        # Dir.UP[nfloors - 1] and Dir.DOWN[0] will always be False
+        self.reqs = { BDir.UP: [False for i in range(self.nfloors)], 
+                      BDir.DOWN: [False for i in range(self.nfloors)] }
+        # BDir.UP[nfloors - 1] and BDir.DOWN[0] will always be False
         # but it's convenient to keep the indexing consistent
         
     def __str__(self):
         return 'Elev {} at f.{} with {} riders, moving {} at {:10.3f}'.format( \
-               self.ident, self.curfloor, self.nriders, self.curdir, time.perf_counter())  
+               self.ident, self.curfloor, self.nriders, self.curdir, 
+               time.perf_counter())  
        
     def moved(self):
-        ''' changes state, assumes direction has been adjusted for floor position '''
-        if self.curdir == Dir.UP:
+        ''' changes elevator state to represent move to next floor '''
+        if self.curdir == BDir.UP:
             self.curfloor += 1
-        elif self.curdir == Dir.DOWN:
+        elif self.curdir == BDir.DOWN:
             self.curfloor -= 1
 
         if self.curfloor == self.nfloors - 1:   #at top
-            self.curdir = Dir.DOWN
+            self.curdir = BDir.DOWN
         elif self.curfloor == 0:
-            self.curdir = Dir.UP 
+            self.curdir = BDir.UP 
     
     def hasanyrequest(self):
-        return any(self.reqs[Dir.UP]) or any(self.reqs[Dir.DOWN])
+        return any(self.reqs[BDir.UP]) or any(self.reqs[BDir.DOWN])
             
     def hasrequest(self):
-        if self.curdir == Dir.UP:
-            return self.reqs[Dir.UP][self.curfloor]
-        elif self.curdir == Dir.DOWN:
-            return self.reqs[Dir.DOWN][self.curfloor]
+        if self.curdir == BDir.UP:
+            return self.reqs[BDir.UP][self.curfloor]
+        elif self.curdir == BDir.DOWN:
+            return self.reqs[BDir.DOWN][self.curfloor]
         else:
             return False 
             
@@ -159,7 +168,7 @@ class Elevator:
                   self.curfloor + 1, 
                   floorlist.nupwaiting[self.curfloor], 
                   floorlist.ndownwaiting[self.curfloor])) 
-        if self.curdir == Dir.UP:
+        if self.curdir == BDir.UP:
             if floorlist.nupwaiting[self.curfloor] > 0:
                 inc = min(self.maxriders - self.nriders, floorlist.nupwaiting[self.curfloor])
                 self.nriders += inc 
@@ -167,8 +176,8 @@ class Elevator:
             #get rider requests
             for rider in range(self.nriders):
                 pick = random.randint(self.curfloor + 1, self.nfloors - 1)
-                self.reqs[Dir.UP][pick] = True                        
-        elif self.curdir == Dir.DOWN:
+                self.reqs[BDir.UP][pick] = True                        
+        elif self.curdir == BDir.DOWN:
             if floorlist.ndownwaiting[self.curfloor] > 0:
                 inc = min(self.maxriders - self.nriders, floorlist.ndownwaiting[self.curfloor])
                 self.nriders += inc
@@ -176,7 +185,7 @@ class Elevator:
             #get rider requests
             for rider in range(self.nriders):
                 pick = random.randint(0, self.curfloor - 1)
-                self.reqs[Dir.DOWN][pick] = True
+                self.reqs[BDir.DOWN][pick] = True
                       
         
 class ElevatorList:   
@@ -185,10 +194,9 @@ class ElevatorList:
     #config
     def __init__(self, config):
         self.elev_count = config['elevator_count']
-        self.floor_count = config['floor_count']
-    
+        self.floor_count = config['floor_count']    
         self._elevs = []
-        [self._elevs.append(Elevator(i, config)) for i in range(self.elev_count)]
+        [self._elevs.append(Elevator(i, config['elevators'][i])) for i in range(self.elev_count)]
         
     #def __iter__(self):
     #    return _elevs.__iter__()
@@ -231,20 +239,20 @@ class ElevatorList:
         dist = max_dist
         
         if elev.curdir == reqdir:
-            if elev.curdir == Dir.UP:
+            if elev.curdir == BDir.UP:
                 if reqfloor >= elev.curfloor:                    
                     dist = reqfloor - elev.curfloor
                 else:   # below and behind
                     dist = max_dist - elev.curfloor + reqfloor 
-            elif elev.curdir == Dir.DOWN:
+            elif elev.curdir == BDir.DOWN:
                 if reqfloor <= elev.curfloor:                    
                     dist = elev.curfloor - reqfloor
                 else:   #above and behind
                     dist = max_dist - elev.curfloor + reqfloor 
         else:
-            if elev.curdir == Dir.UP:
+            if elev.curdir == BDir.UP:
                 dist = max_dist - elev.curfloor - reqfloor
-            elif elev.curdir == Dir.DOWN:
+            elif elev.curdir == BDir.DOWN:
                 dist = elev.curfloor + reqfloor                
                 
         return dist
@@ -267,16 +275,15 @@ async def elev_proc(elev, floorlist, t_count):
     ntrips = 0
     
     while time.perf_counter() < t_count:
-        #get elev index from elev_ident, i.e. last char
         
         ntrips += 1
         nunloaded = 0
         
         #move
         #due to async, the waiting rider counts shown here are not always up to date        
-        print('{} moving {} with {} from f.{} at {:5.3f}{} \t {},{}\t {},{}\t {},{} '.format(
+        print('{} moving {!s} with {} from f.{} at {:5.3f}{} \t {},{}\t {},{}\t {},{} '.format(
                ' ' * (int(elev.idx > 0)) * 30, 
-               elev.curdir.value, elev.nriders, floorlist.idents[elev.curfloor], 
+               elev.curdir, elev.nriders, floorlist.idents[elev.curfloor], 
                time.perf_counter(), 
                ' ' * (int(elev.idx == 0)) * 30,
                floorlist.nupwaiting[0], floorlist.ndownwaiting[0],
@@ -353,7 +360,6 @@ def main(config):
              replace top(n) with gettop()
              replace hasreq() with hasreq(fl,dir)  ??
              review event duration times used in asyncio.sleep
-             do something about the floor 'names' vs the indices
              reassess access to config by various (moving) parts
              '''
      
@@ -361,7 +367,7 @@ def main(config):
     print('total simulation time to run: ', config['running_time'])
              
     t0 = time.perf_counter()   #time()
-    print('start time: {:3.4f}'.format(t0))     
+    print('start time: {:3.4f}'.format(t0))  
     
     event_loop = asyncio.get_event_loop()
     try:
@@ -376,12 +382,23 @@ DEFAULT_CONFIG = \
 '''
 ---
 #default elevsim config.yml
-version : 0.1
+version : 0.2
 
-running_time : 3
+running_time : 1.2
 floor_count : 3
 elevator_count : 2
-elevator_maxriders : 10    
+elevator_maxriders : 10
+
+elevators:
+  - name : elev.1
+    floors_served : 3 
+    maxriders : 10
+    loc :  west
+    
+  - name : elev.2
+    floors_served : 3
+    maxriders : 10
+    loc:  east       
 '''    
 
 if __name__ == "__main__":
