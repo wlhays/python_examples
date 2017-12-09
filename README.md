@@ -8,6 +8,7 @@ Short pieces of Python code found in various (cited) places that require some th
 * Kernel Density Estimate, based on a NumPy example in Philipp Janert's Data Analysis with OpenSource Tools
 * Game Of Life, based on a NumPy example from Jake VanDerPlas 
 * Elevator Simulation using asyncio coroutines (currently just Python code)
+* enum.Enum, various examples 
 
 ## License
 
