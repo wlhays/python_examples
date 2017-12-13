@@ -126,22 +126,24 @@ class PokerHandRank(enum.Enum):
         
         high = PlayingCard.TWO_OF_CLUBS
         next_high = PlayingCard.TWO_OF_CLUBS # use None if this doesn't matter
+        kicker = None # only used in the rare case of same TWO_PAIR using 5th card
 
         if ctr_mc[0][1] == 4:
             for c in cards:
                 if c.rank == ctr_mc[0][0]:
                     if c > high:
                         high = c            
-            return (self.FOUR_OF_A_KIND, high, None)
+            return (self.FOUR_OF_A_KIND, high, None, None)
         elif ctr_mc[0][1] == 3:
             for c in cards:
                 if c.rank == ctr_mc[0][0]:
                     if c > high:
                         high = c            
             if ctr_mc[1][1] == 2:
-                return (self.FULL_HOUSE, high, None)
+                #rank of triplet determines winner
+                return (self.FULL_HOUSE, high, None, None)
             else:
-                return (self.THREE_OF_A_KIND, high, None)
+                return (self.THREE_OF_A_KIND, high, None, None)
         elif ctr_mc[0][1] == 2:
             for c in cards:
                 if c.rank == ctr_mc[0][0]:
@@ -151,11 +153,18 @@ class PokerHandRank(enum.Enum):
                     if c > next_high:
                         next_high = c                    
             if ctr_mc[1][1] == 2:
-                return (self.TWO_PAIR, high, next_high)
+                for c in cards:
+                    if c.rank != ctr_mc[0][0] and c.rank != ctr_mc[1][0]:
+                        kicker = c
+                # 2nd group may have higher rank than first, so reverse them
+                if high.rank > next_high.rank:       
+                    return (self.TWO_PAIR, high, next_high, kicker)
+                else:
+                    return (self.TWO_PAIR, next_high, high, kicker)                
             else:
-                return (self.PAIR, high, next_high)        
+                return (self.PAIR, high, next_high, None)        
         
-        #otherwise counts are all `1`
+        #otherwise mc_ctr counts are all `1`
         #test for flush, i.e. Suit multiples       
         is_flush = all([c.suit == cards[0].suit for c in cards[1:]])        
         is_straight = True  #temp
@@ -173,21 +182,23 @@ class PokerHandRank(enum.Enum):
         
         if is_straight:
             if is_flush:
-                return (self.STRAIGHT_FLUSH, high, None)
+                return (self.STRAIGHT_FLUSH, high, None, None)
             else:
-                return (self.STRAIGHT, high, None)
+                return (self.STRAIGHT, high, None, None)
         
         if is_flush:
-            return (self.FLUSH, high, None)
+            return (self.FLUSH, high, None, None)
             
         #default is lowest rank
-        return (self.HIGH_CARD, high, None)
+        return (self.HIGH_CARD, high, None, None)
         
 
 class PokerHand():
     ''' instance of an ordered poker hand with containing a 
         list of 5 distinct PlayingCards
-        ordering enables comparison between hands to establish a winner 
+        ordering enables comparison between hands to establish a winner
+        In matching hand ranks, the ranks are distinct and not subclassed,
+        e.g. a STRAIGHT_FLUSH is not also a STRAIGHT  
     '''
     
     def __init__(self, cards):
@@ -203,7 +214,8 @@ class PokerHand():
             raise ValueError('Poker Hand Error: instance needs distinct cards')    
         else:
             self.cards = cards
-            self.hand_rank, self.high, self.next_high = PokerHandRank.classify_hand(cards)
+            self.hand_rank, self.high, \
+                self.next_high, self.kicker = PokerHandRank.classify_hand(cards)
                     
     def beats(self, other):
         if self.hand_rank > other.hand_rank:
@@ -217,12 +229,23 @@ class PokerHand():
                                   PokerHandRank.STRAIGHT_FLUSH,
                                   PokerHandRank.STRAIGHT,
                                   PokerHandRank.FLUSH,
-                                  PokerHandRank.HIGH_CARD) :
+                                  PokerHandRank.HIGH_CARD):
                 return self.high > other.high 
-            else:   # self.hand_rank  is TWO_PAIR or PAIR 
-                if self.high > other.high:
+            elif self.hand_rank == PokerHandRank.TWO_PAIR: 
+                if self.high.rank > other.high.rank:
                     return True
-                elif other.high > self.high:
+                elif other.high.rank > self.high.rank:
+                    return False
+                elif self.next_high.rank > other.next_high.rank:
+                        return True
+                elif other.next_high.rank > self.next_high.rank:
+                        return False
+                else:  
+                    return self.kicker > other.kicker               
+            elif self.hand_rank == PokerHandRank.PAIR: 
+                if self.high.rank > other.high.rank:
+                    return True
+                elif other.high.rank > self.high.rank:
                     return False
                 else: 
                     return self.next_high > other.next_high               
