@@ -1,11 +1,14 @@
-# elevator simulation with asyncio coroutines
 '''
-20171201 - elev_procs poll for requests before moving
+        elevator simulation with asyncio coroutines
+        
+        configuration for the simulation objects:   
+            specified in the commandline as the first argument
+            or uses the default configuration
 
-         - changed timing to just specify an end time and test each
-           coro while loop, as opposed to accumulating bits of time
-
-
+        logging:
+            configuration is in `logging.cfg`
+            simulation event logging is written to `sim_events.log`
+            application events (which are few) to `sim_app.log`
 '''
 
 import asyncio
@@ -14,9 +17,10 @@ import time
 import yaml
 from enum import Enum
 from sys import argv
+import os.path
+import logging
+import logging.config
 
-
-#ElAc = Enum('Elev Action', 'LOAD MOVE STEP UNLOAD')
 
 class BDir(Enum):
     ''' Binary Direction, i.e. just two opposites 
@@ -32,6 +36,19 @@ class BDir(Enum):
             return '↑'
         else:
             return '↓'
+
+
+elevator_move_type = Enum('Elev Action', 'LOAD MOVE STEP UNLOAD')  
+
+class ElevatorMoveEvent():  # namedtuple
+    ''' for Event logging '''
+    pass
+   
+ 
+    
+class FloorEvent():
+    ''' for Event logging '''
+    pass    
 
 
 class FloorList:
@@ -87,7 +104,7 @@ class FloorList:
              
     
 async def floor_proc(ifloor, floorlist, elevlist, t_count):
-    '''  coroutine to accumulate riders and send stop requests to elevatorlist '''
+    ''' coroutine to accumulate riders and send requests to elevatorlist '''
     
     ncycles = 0
     
@@ -119,7 +136,7 @@ async def floor_proc(ifloor, floorlist, elevlist, t_count):
 class Elevator:
     
     def __init__(self, idx, elev_config):
-        '''config is just the part for the particular elevator which is a dict'''
+        '''config is the part for the particular elevator which is a dict'''
         self.idx = idx   
         self.ident = elev_config['name'] 
         self.maxriders = elev_config['maxriders']    
@@ -161,7 +178,7 @@ class Elevator:
             return False 
             
     def loadriders(self, floorlist):
-        #print("{}loading riders".format(' ' * 70))
+        inc = 0
         if floorlist.nupwaiting[self.curfloor] > 0 or floorlist.ndownwaiting[self.curfloor] > 0:
             print('{}waiting on f.{}: {}, {}'.format(
                   ' ' * 70, 
@@ -186,7 +203,7 @@ class Elevator:
             for rider in range(self.nriders):
                 pick = random.randint(0, self.curfloor - 1)
                 self.reqs[BDir.DOWN][pick] = True
-                      
+        return inc              
         
 class ElevatorList:   
     '''singleton'''
@@ -196,7 +213,8 @@ class ElevatorList:
         self.elev_count = config['elevator_count']
         self.floor_count = config['floor_count']    
         self._elevs = []
-        [self._elevs.append(Elevator(i, config['elevators'][i])) for i in range(self.elev_count)]
+        [self._elevs.append(Elevator(i, 
+            config['elevators'][i])) for i in range(self.elev_count)]
         
     #def __iter__(self):
     #    return _elevs.__iter__()
@@ -256,15 +274,39 @@ class ElevatorList:
                 dist = elev.curfloor + reqfloor                
                 
         return dist
-                      
+
+def log_data_elev(elev, event_type, event_amt, desc):
+    ''' log data in table event and visualization formats '''
+    evt_logger = logging.getLogger('sim_events_logger')         
+    evt_logger.info('{}, E{},{} {},{}{}'.format(
+               time.perf_counter(),
+               elev.idx, event_type, event_amt, 
+               elev.curfloor, elev.curdir)) #, elev.nriders))
+               
+    #TODO evt_vis_logger to console           
+
+def log_data_floor(floorlist, flooridx, event_type, event_amt, desc):
+    ''' log data in table event and visualization formats '''
+    evt_logger = logging.getLogger('sim_events_logger')         
+    evt_logger.info('{}, F{},{} {}'.format(
+               time.perf_counter(),
+               flooridx, event_type, event_amt))
+               
+    #TODO evt_vis_logger to console           
+                          
     
 async def elev_proc(elev, floorlist, t_count):
     ''' coroutine for each elevator with a loop for each floor
         to floor move '''
     print(elev)
+    evt_logger = logging.getLogger('sim_events_logger')         
+    #evt_logger.info('E{},Init,{}{},0'.format(elev.idx, elev.curfloor, elev.curdir))
+    log_data_elev(elev, 'Init', 0, '')
     
     #initial load;  otherwise only loads after a stop
-    elev.loadriders(floorlist)
+    inc_riders = elev.loadriders(floorlist)
+    #evt_logger.info('E{},Load,{}{},{}'.format(elev.idx, elev.curfloor, elev.curdir, elev.nriders))
+    log_data_elev(elev, 'Load', inc_riders, '')
     
     while not elev.hasanyrequest():
         print("{}p-polling for req".format(' ' * elev.idx * 35))
@@ -280,6 +322,8 @@ async def elev_proc(elev, floorlist, t_count):
         nunloaded = 0
         
         #move
+        #evt_logger.info('E{},Move,{}{},{}'.format(elev.idx, elev.curfloor, elev.curdir, elev.nriders))
+        log_data_elev(elev, 'Move', elev.nriders, '')
         #due to async, the waiting rider counts shown here are not always up to date        
         print('{} moving {!s} with {} from f.{} at {:5.3f}{} \t {},{}\t {},{}\t {},{} '.format(
                ' ' * (int(elev.idx > 0)) * 30, 
@@ -301,6 +345,8 @@ async def elev_proc(elev, floorlist, t_count):
         #stop at or pass floor
         elev.moved()
         if elev.hasrequest() or floorlist.istop(elev.curfloor) or floorlist.isbottom(elev.curfloor):
+            #evt_logger.info('E{},stop,{}{},{}'.format(elev.idx, elev.curfloor, elev.curdir, elev.nriders))
+            log_data_elev(elev, 'Stop', elev.nriders, '')
             print('{} stopping at f.{} at {:5.3f}'.format(' ' * elev.idx * 35, 
                    floorlist.idents[elev.curfloor], 
                    time.perf_counter()))      
@@ -314,13 +360,19 @@ async def elev_proc(elev, floorlist, t_count):
                 else: 
                     nunloaded = random.randint(0, elev.nriders)   
                     elev.nriders -= nunloaded
+                #evt_logger.info('E{},unld,{}{},{}'.format(elev.idx, elev.curfloor, elev.curdir, elev.nriders))
+                log_data_elev(elev, 'Unld', nunloaded, '')
                 print('{} unloaded {} riders '.format( 
                        ' ' * (int(elev.idx > 0)) * 35,
                        nunloaded))   
             #load    
-            elev.loadriders(floorlist)
+            inc_riders = elev.loadriders(floorlist)
+            #evt_logger.info('E{},load,{}{},{}'.format(elev.idx, elev.curfloor, elev.curdir, elev.nriders))
+            log_data_elev(elev, 'Load', inc_riders, '')
        
         else:
+            #evt_logger.info('E{},pass,{}{},{}'.format(elev.idx, elev.curfloor, elev.curdir, elev.nriders))
+            log_data_elev(elev, 'Pass', 0, '')
             print('{} passing floor {} at {:5.3f}'.format(' ' * elev.idx * 35, 
                    floorlist.idents[elev.curfloor], 
                    time.perf_counter()))
@@ -352,7 +404,7 @@ async def elev_controller(starttime, config):
     return elev_res
 
 
-def main(config):
+def main(sim_cfg):
     ''' TODO:
              alternate way to wait for request, e.g. queue
              Config validation
@@ -361,24 +413,46 @@ def main(config):
              replace hasreq() with hasreq(fl,dir)  ??
              review event duration times used in asyncio.sleep
              reassess access to config by various (moving) parts
-             '''
-     
-    #TODO this can raise exeption if value not present
-    print('total simulation time to run: ', config['running_time'])
              
-    t0 = time.perf_counter()   #time()
-    print('start time: {:3.4f}'.format(t0))  
+             '''
+             
+    #logging
+    log_cfg_path = 'logging.cfg'
+    if os.path.exists(log_cfg_path):
+        with open(log_cfg_path, 'rt') as f:
+            log_cfg = yaml.safe_load(f.read())
+        logging.config.dictConfig(log_cfg)
+    else:
+        #TODO 
+        print('Logging config failed to initialize:  missing file logging.cfg')
+        sys.exit(-1)
+                    
+    app_logger = logging.getLogger('app_logger')         
+    app_logger.info("simulation started")
+    
+    #temp 
+    evt_logger = logging.getLogger('sim_events_logger')         
+    evt_logger.info('sim initialized')
+    
+    
+    #TODO this can raise exeption if value not present - config schema val will fix
+    app_logger.info('Main\ttotal simulation time to run: {}'.format(sim_cfg['running_time']))
+             
+    t0 = time.perf_counter()   
+    app_logger.info('Main\tstart time: {:3.4f}'.format(t0))  
     
     event_loop = asyncio.get_event_loop()
     try:
-        result = event_loop.run_until_complete(elev_controller(t0, config))
-        print('\nresult: {!r}'.format(result))
-        #[print(i) for i in result]
+        result = event_loop.run_until_complete(elev_controller(t0, sim_cfg))
+        app_logger.info('result: {!r}'.format(result))
     finally:
         event_loop.close()
-    print('total time: {:3.4f}'.format(time.perf_counter() - t0))  #  time() - t0))    
+    app_logger.info('total time: {:3.4f}'.format(time.perf_counter() - t0))  #  time() - t0))  
+    
+    app_logger.info("simulation ended")  
 
-DEFAULT_CONFIG = \
+
+DEFAULT_SIM_CONFIG = \
 '''
 ---
 #default elevsim config.yml
@@ -404,11 +478,11 @@ elevators:
 if __name__ == "__main__":
     if len(argv) == 2:
         try:
-            with open(argv[1]) as f_config:
-                config = yaml.safe_load(f_config)
-                main(config)
+            with open(argv[1]) as f_sim_config:
+                sim_cfg = yaml.safe_load(f_sim_config)
+                main(sim_cfg)
         except OSError as e:  
             print(e)      
     else:    
-        main(yaml.load(DEFAULT_CONFIG))
+        main(yaml.load(DEFAULT_SIM_CONFIG))
  
