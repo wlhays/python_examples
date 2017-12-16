@@ -1,0 +1,69 @@
+$schema: http://json-schema.org/draft-04/schema#
+title: PythonLoggingConfig
+type: object
+properties: 
+    version: 
+        type: integer
+        
+    formatters:
+        type: object
+        patternProperties:
+            '^\w+$':
+                type: object
+                properties:
+                    format: 
+                        type: string 
+                required: [format]                       
+        additionalProperties: no      # forces match of pattern 
+         
+    handlers:
+        type: object
+        patternProperties:
+            '^\w+$':
+                type: object
+                properties:
+                    class: 
+                        type: string 
+                    level:
+                        enum: [ NOTSET, DEBUG, INFO, WARNING, ERROR, CRITICAL ]
+                    formatter:
+                        type: string   # one of keys in formatters    
+                    stream:
+                        type: string
+                    filename:            
+                        type: string  
+                    encoding:          # enum : [ utf8, ?]
+                        type: string                
+                required: [class, level, formatter]                       
+        additionalProperties: no   
+    
+    loggers:
+        type: object
+        patternProperties:
+            '^\w+$':
+                type: object
+                properties:
+                    level:
+                        enum: [ NOTSET, DEBUG, INFO, WARNING, ERROR, CRITICAL ]
+                    handlers:
+                        type: array
+                        items: 
+                             type: string 
+                    propagate: 
+                        type: boolean
+                required: [ level, handlers ]              
+        additionalProperties: no      # forces match of pattern  
+     
+    root:
+        type: object
+        properties:
+            level: 
+                enum: [ NOTSET, DEBUG, INFO, WARNING, ERROR, CRITICAL ]
+            handlers: 
+                type: array
+                items: 
+                    type: string 
+                    # possible to say `one of handlers` by the key?                 
+               
+required: [version, formatters, handlers, loggers, root]
+
