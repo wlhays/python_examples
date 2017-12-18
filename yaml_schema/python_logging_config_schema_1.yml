@@ -1,5 +1,10 @@
 $schema: http://json-schema.org/draft-04/schema#
 title: PythonLoggingConfig
+
+definitions:
+    level_enum :
+        enum: [NOTSET, DEBUG, INFO, WARNING, ERROR, CRITICAL ]
+
 type: object
 properties: 
     version: 
@@ -21,20 +26,31 @@ properties:
         patternProperties:
             '^\w+$':
                 type: object
-                properties:
-                    class: 
-                        type: string 
-                    level:
-                        enum: [ NOTSET, DEBUG, INFO, WARNING, ERROR, CRITICAL ]
-                    formatter:
-                        type: string   # one of keys in formatters    
-                    stream:
-                        type: string
-                    filename:            
-                        type: string  
-                    encoding:          # enum : [ utf8, ?]
-                        type: string                
-                required: [class, level, formatter]                       
+                oneOf:
+                  - properties:
+                        class: 
+                            type: string 
+                        level:
+                            $ref: '#/definitions/level_enum'
+                        formatter:
+                            type: string   # one of keys in formatters
+                        stream:
+                             type: string 
+                    required: [class, level, formatter] 
+                    additionalProperties: no                                        
+                  - properties:
+                        class: 
+                            type: string 
+                        level:
+                            $ref: '#/definitions/level_enum'
+                        formatter:
+                            type: string   # one of keys in formatters
+                        filename:            
+                            type: string                                   
+                        encoding:          # enum : [ utf8, ?]
+                            type: string                                                              
+                    required: [class, level, formatter]                       
+                    additionalProperties: no 
         additionalProperties: no   
     
     loggers:
@@ -44,7 +60,7 @@ properties:
                 type: object
                 properties:
                     level:
-                        enum: [ NOTSET, DEBUG, INFO, WARNING, ERROR, CRITICAL ]
+                            $ref: '#/definitions/level_enum'
                     handlers:
                         type: array
                         items: 
@@ -58,7 +74,7 @@ properties:
         type: object
         properties:
             level: 
-                enum: [ NOTSET, DEBUG, INFO, WARNING, ERROR, CRITICAL ]
+                $ref: '#/definitions/level_enum'
             handlers: 
                 type: array
                 items: 
